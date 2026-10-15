@@ -1,0 +1,151 @@
+% Bao cao ky thuat Sang kien cong nghe VDT 2026 - Giai doan 2.
+% Bien dich: pdflatex bao_cao_sang_kien_cong_nghe.tex (chay hai lan).
+% Trang dau lay truc tiep tu PDF bia da cap nhat.
+\documentclass[12pt,a4paper]{report}
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage[vietnamese]{babel}
+\usepackage{lmodern}
+\usepackage{geometry}
+\usepackage{setspace}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{float}
+\usepackage{pdfpages}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+\geometry{left=3cm,right=2.4cm,top=2.5cm,bottom=2.5cm}
+\onehalfspacing
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcommand{\code}[1]{\texttt{#1}}
+\lstset{basicstyle=\ttfamily\small,breaklines=true,frame=single,columns=fullflexible,showstringspaces=false}
+\renewcommand{\contentsname}{Mục lục}
+\renewcommand{\bibname}{Tài liệu tham khảo}
+
+\begin{document}
+\includepdf[pages=1,fitpaper=true]{vdt_report_sang_kien_cong_nghe.pdf}
+
+\chapter*{Tóm tắt}
+\addcontentsline{toc}{chapter}{Tóm tắt}
+Đề tài xây dựng một môi trường trình diễn quan sát User Plane Function (UPF) 5G bằng dữ liệu mô phỏng. Một dịch vụ Go phát các chỉ số theo định dạng Prometheus; Prometheus thu thập mỗi 5 giây; Grafana nạp sẵn dashboard để người xem theo dõi lưu lượng, gói tin bị loại, phiên đang hoạt động và mức sử dụng bốn lcore. API cho phép chuyển tức thời giữa hai tình huống \code{normal} và \code{degraded} để minh họa quan hệ giữa suy giảm thông lượng, tăng packet drop và tăng tải CPU.
+
+Sản phẩm đã có mã nguồn, cấu hình triển khai bằng Docker Compose, dashboard và kiểm thử đơn vị. Các số liệu trong báo cáo là giá trị \emph{mô phỏng xác định} do chương trình tạo ra; chúng không phải kết quả đo từ UPF hoặc mạng 5G thực. Giá trị ứng dụng hiện tại là trình diễn, đào tạo và thử giao diện giám sát; kết nối với UPF thật là bước tiếp theo.
+
+\tableofcontents
+
+\chapter{Bài toán và phạm vi}
+\section{Bối cảnh}
+Trong hệ thống 5G, UPF xử lý lưu lượng ở user plane. Khi giám sát vận hành, kỹ sư cần nhận biết nhanh lưu lượng nhận/gửi, số gói bị loại, số phiên đang hoạt động và áp lực xử lý trên các lõi logic. Một dashboard trực quan giúp so sánh trạng thái bình thường với tình huống suy giảm, đồng thời kiểm tra luồng thu thập metric trước khi có hệ thống thật.
+
+\section{Mục tiêu và phạm vi triển khai}
+Đề tài đặt ba mục tiêu kỹ thuật: (1) tạo nguồn metric lặp lại được để demo không phụ thuộc traffic thật; (2) đưa metric qua pipeline Prometheus--Grafana có thể dựng bằng một lệnh; (3) cung cấp thao tác đổi tình huống vận hành để quan sát thay đổi trên dashboard. Phạm vi hiện tại chỉ là \textbf{mock exporter}. Chương trình không xử lý gói tin, không thực thi chức năng UPF 3GPP, không đo lcore thật và không có cảnh báo tự động.
+
+\chapter{Giải pháp kỹ thuật}
+\section{Kiến trúc hệ thống}
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=1.1cm, box/.style={draw,rounded corners,align=center,minimum width=3.2cm,minimum height=1.25cm}, arr/.style={-{Latex},thick}]
+\node[box] (upf) {Go mock UPF\\\code{/metrics}, \code{/mode}, \code{/healthz}};
+\node[box,right=of upf] (prom) {Prometheus\\scrape mỗi 5 giây};
+\node[box,right=of prom] (graf) {Grafana\\dashboard 4 panel};
+\draw[arr] (upf) -- node[above]{Prometheus text} (prom);
+\draw[arr] (prom) -- node[above]{PromQL} (graf);
+\end{tikzpicture}
+\caption{Luồng dữ liệu quan sát trong Docker Compose}
+\end{figure}
+
+\code{main.go} tạo registry riêng, đăng ký ba Counter, một Gauge cho session và một GaugeVec có nhãn \code{lcore}. Mỗi giây, goroutine gọi \code{advance()} để cập nhật một nhịp dữ liệu. \code{prometheus.yml} đặt \code{scrape\_interval: 5s} và thu thập từ \code{mock-upf:8080}. Grafana được cấu hình datasource và dashboard bằng các tệp trong \code{grafana/provisioning/} và \code{grafana/dashboards/}. \code{compose.yaml} ghép ba dịch vụ, kiểm tra sức khỏe exporter trước khi khởi động Prometheus.
+
+\section{Mô hình metric và API}
+\begin{table}[H]
+\centering\small
+\caption{Metric do exporter phát ra}
+\begin{tabularx}{\textwidth}{p{5.5cm}p{1.6cm}Y}
+\toprule
+\textbf{Tên} & \textbf{Loại} & \textbf{Ý nghĩa} \\
+\midrule
+\code{upf\_packets\_received\_total} & Counter & Tổng gói nhận mô phỏng từ lúc khởi động. \\
+\code{upf\_packets\_transmitted\_total} & Counter & Tổng gói gửi mô phỏng. \\
+\code{upf\_packets\_dropped\_total} & Counter & Tổng gói bị loại mô phỏng. \\
+\code{upf\_active\_sessions} & Gauge & Số phiên mô phỏng tại nhịp hiện tại. \\
+\code{upf\_lcore\_utilization\_ratio\{lcore\}} & GaugeVec & Tỷ lệ tải của lcore 0--3 trong khoảng 0--1. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\code{GET /metrics} xuất dữ liệu cho Prometheus. \code{GET /healthz} trả \code{ok} và được Compose dùng làm healthcheck. \code{GET /mode} trả JSON cho chế độ hiện hành. \code{POST /mode?mode=normal} hoặc \code{POST /mode?mode=degraded} đổi chế độ; giá trị khác trả HTTP 400. Biến môi trường \code{SIMULATION\_MODE} quyết định chế độ lúc khởi động. Mutex bảo vệ \code{mode} và \code{tick} khi ticker và HTTP handler chạy đồng thời.
+
+\section{Thuật toán tạo dữ liệu}
+Với nhịp cập nhật \(t\), chương trình lấy \(w=t\bmod 10\). Nhờ chu kỳ 10 nhịp và không dùng số ngẫu nhiên, cùng một chuỗi thao tác sẽ tạo cùng mẫu dữ liệu. Mỗi nhịp giữ bất biến \(\Delta\mathrm{received}=\Delta\mathrm{transmitted}+\Delta\mathrm{dropped}\).
+
+\begin{table}[H]
+\centering\small
+\caption{Công thức cập nhật theo từng giây trong mã nguồn}
+\begin{tabularx}{\textwidth}{p{3.5cm}Y Y}
+\toprule
+\textbf{Chỉ số} & \textbf{Normal} & \textbf{Degraded} \\
+\midrule
+Gói nhận thêm & \(1200+15w\) & \(520+8w\) \\
+Gói bị loại thêm & \(2+(w\bmod 3)\) & \(75+2w\) \\
+Phiên đang hoạt động & \(1000+5w\) & \(950+3w\) \\
+Tải lcore \(i\) & \(0.32+0.035i+0.005w\) & \(0.78+0.035i+0.005w\) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+Ở đây \(i\in\{0,1,2,3\}\). Số gói gửi thêm được tính bằng gói nhận thêm trừ gói bị loại thêm. Counter tích lũy từ lúc khởi động; Gauge thay đổi theo nhịp. Chế độ mới có hiệu lực ở lần cập nhật kế tiếp, không viết lại lịch sử metric.
+
+\section{Dashboard và cách đọc}
+Dashboard \emph{Mock UPF Overview} có bốn panel: lưu lượng nhận/gửi theo packet/giây, tốc độ drop, số phiên đang hoạt động và tải từng lcore. Hai panel tốc độ dùng PromQL \code{rate(...[\$\_\_rate\_interval])} trên Counter. Panel lcore dùng đơn vị phần trăm và hiển thị các chuỗi theo nhãn \code{lcore}. Dashboard tự refresh 5 giây, mặc định xem 15 phút gần nhất. Vì \code{rate()} cần ít nhất hai mẫu, người xem nên chờ khoảng 20 giây sau khi dựng môi trường trước khi đánh giá đồ thị.
+
+\chapter{Triển khai và kết quả}
+\section{Cấu trúc và cách chạy}
+\begin{table}[H]
+\centering\small
+\caption{Tệp chính trong repository}
+\begin{tabularx}{\textwidth}{p{5.1cm}Y}
+\toprule
+\textbf{Tệp} & \textbf{Vai trò} \\
+\midrule
+\code{main.go}, \code{main\_test.go} & Bộ mô phỏng, HTTP exporter và kiểm thử đơn vị. \\
+\code{go.mod}, \code{go.sum} & Khai báo phiên bản Go và thư viện Prometheus client. \\
+\code{Dockerfile}, \code{compose.yaml} & Đóng gói ứng dụng và triển khai ba dịch vụ. \\
+\code{prometheus.yml} & Cấu hình scrape 5 giây. \\
+\code{grafana/} & Datasource, dashboard provider và dashboard JSON. \\
+\code{README.md} & Hướng dẫn khởi chạy, sử dụng và mô tả metric. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Yêu cầu chạy demo là Docker có Compose plugin. Từ thư mục dự án, chạy \code{docker compose up --build}. Mở \url{http://localhost:3000/d/mock-upf-demo/mock-upf-overview} để xem dashboard; \url{http://localhost:9090/targets} để xác nhận target \code{mock-upf} ở trạng thái UP. Có thể xem metric thô tại \url{http://localhost:8080/metrics}. Demo dùng chế độ \code{normal} mặc định. Để chuyển sang suy giảm, chạy:
+\begin{lstlisting}
+curl -X POST 'http://localhost:8080/mode?mode=degraded'
+\end{lstlisting}
+Sau khoảng 20 giây, xem lại bốn panel; khôi phục bằng \code{mode=normal}. Khi kết thúc, chạy \code{docker compose down}. Nếu chạy Go trực tiếp cần Go 1.23 trở lên; Dockerfile dùng Go 1.25 ở giai đoạn build.
+
+\section{Kết quả có thể kiểm chứng}
+Từ công thức trong mã nguồn, ở trạng thái ổn định, chế độ normal tạo 1.200--1.335 gói nhận mỗi giây và 2--4 gói bị loại mỗi giây. Chế độ degraded tạo 520--592 gói nhận và 75--93 gói bị loại mỗi giây. Tải lcore 0 chuyển từ khoảng 32--36,5\% sang 78--82,5\%; lcore 3 cao hơn 10,5 điểm phần trăm. Đây là \emph{giá trị thiết kế của simulator}, không phải thông lượng đo từ thiết bị hay hệ thống thật. Do Prometheus lấy mẫu mỗi 5 giây rồi tính \code{rate()}, giá trị tức thời trên Grafana có thể khác các giới hạn theo từng nhịp một giây.
+
+Bộ \code{go test ./...} đã chạy thành công trong môi trường hiện tại. Kiểm thử xác nhận Counter nhận bằng tổng Counter gửi và drop; Counter tăng qua các nhịp; Gauge phiên và bốn lcore hợp lệ; chuyển mode làm lượng gói giảm, drop và tải lcore tăng; mode sai trả HTTP 400 và mode ban đầu sai bị từ chối. \code{docker compose config --quiet} cũng thành công, xác nhận cú pháp cấu hình Compose. Chưa có bằng chứng trong repository về một lần chạy end-to-end của ba container hoặc phép đo hiệu năng trên UPF thật.
+
+\section{Giá trị ứng dụng và giới hạn}
+Giải pháp có thể dùng để trình diễn một pipeline quan sát UPF, luyện tập đọc metric và kiểm tra dashboard trước khi nối dữ liệu sản xuất. Cấu hình được lưu thành mã nên có thể khởi tạo lại nhanh và thay đổi panel có kiểm soát. Mô hình hai chế độ giúp minh họa cách một sự cố tải ảnh hưởng đồng thời tới throughput, drop và lcore.
+
+Giới hạn kỹ thuật hiện tại gồm: dữ liệu được sinh theo công thức, không thu từ dataplane; số lcore cố định là bốn; chỉ có hai mode; không có metric latency, PDU session thật hay nhãn theo slice/tenant; chưa có cảnh báo và xác thực phù hợp triển khai công khai. Tài khoản Grafana mặc định \code{admin/admin} trong Compose chỉ phù hợp demo cục bộ. Các điểm này giới hạn kết luận về hiệu năng và khả năng vận hành sản xuất.
+
+\chapter{Kết luận và hướng phát triển}
+Đề tài đã tạo một prototype chạy được về mặt mã nguồn và cấu hình: exporter Go, pipeline Prometheus--Grafana, dashboard được provision sẵn và API điều khiển tình huống. Đóng góp rõ nhất là mô hình demo tái lập được, cho phép người xem quan sát cùng lúc nhiều tín hiệu vận hành khi chuyển từ normal sang degraded.
+
+Bước tiếp theo là nối exporter hoặc OpenTelemetry collector với số liệu UPF thực; thiết kế schema metric theo cổng, slice và loại nguyên nhân drop; thêm cảnh báo; kiểm thử end-to-end Compose; rồi đánh giá bằng dữ liệu đo thực và ghi rõ phần cứng, tải đầu vào, phương pháp lấy mẫu. Nếu mở cho nhiều người dùng, cần thay thông tin xác thực demo và cấu hình phân quyền.
+
+\begin{thebibliography}{9}
+\bibitem{repo} Mã nguồn và hướng dẫn của dự án, \code{README.md}, \code{main.go}, \code{compose.yaml}, \code{grafana/dashboards/mock-upf.json}, tại repository hiện tại.
+\bibitem{prom} Prometheus, \emph{Prometheus documentation}, \url{https://prometheus.io/docs/}.
+\bibitem{graf} Grafana Labs, \emph{Grafana documentation}, \url{https://grafana.com/docs/grafana/}.
+\end{thebibliography}
+\end{document}

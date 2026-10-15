@@ -1,0 +1,116 @@
+% Nam slide tom tat Sang kien cong nghe VDT 2026.
+% Bien dich: pdflatex slides.tex (chay hai lan neu can).
+\documentclass[aspectratio=169,11pt]{beamer}
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage[vietnamese]{babel}
+\usepackage{lmodern}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+\usetheme{Madrid}
+\usecolortheme{default}
+\definecolor{vdtblue}{RGB}{20,78,128}
+\setbeamercolor{structure}{fg=vdtblue}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+\newcommand{\code}[1]{\texttt{#1}}
+
+\begin{document}
+
+\begin{frame}[plain]
+\centering
+\includegraphics[page=1,trim=175bp 640bp 175bp 45bp,clip,width=3.1cm]{vdt_report_sang_kien_cong_nghe.pdf}\\[0.1cm]
+{\small\bfseries TẬP ĐOÀN CÔNG NGHIỆP - VIỄN THÔNG QUÂN ĐỘI}\\[0.5cm]
+{\Large\bfseries BÁO CÁO SÁNG KIẾN CÔNG NGHỆ}\\[0.35cm]
+{\LARGE\bfseries Mô phỏng và trực quan hóa}\\[0.08cm]
+{\LARGE\bfseries chỉ số vận hành UPF 5G}\\[0.35cm]
+{\normalsize\bfseries Họ và tên: Trần Phúc Long}\\[0.12cm]
+{\small\bfseries Email: longtp10@viettel.com.vn}\\[0.12cm]
+{\small\bfseries Chương trình Viettel Digital Talent 2026}\\[0.12cm]
+{\small\bfseries Lĩnh vực: Software Engineer}
+\vfill
+\begin{tabular}{ll}
+\textbf{Mentor:} & Nguyễn Ngọc Dũng \\
+\textbf{Đơn vị:} & Viettel High Tech
+\end{tabular}
+\end{frame}
+
+\begin{frame}{Giải pháp và kiến trúc}
+\centering
+\begin{tikzpicture}[node distance=0.65cm, box/.style={draw=vdtblue,very thick,rounded corners,align=center,minimum width=3.3cm,minimum height=1.45cm}, arr/.style={-{Latex},very thick,vdtblue}]
+\node[box] (go) {Go mock UPF\\5 metric families\\\code{/metrics}, \code{/mode}};
+\node[box,right=of go] (prom) {Prometheus\\scrape mỗi 5 giây\\lưu chuỗi thời gian};
+\node[box,right=of prom] (graf) {Grafana\\dashboard 4 panel\\refresh mỗi 5 giây};
+\draw[arr] (go) -- (prom);
+\draw[arr] (prom) -- (graf);
+\end{tikzpicture}
+\vspace{0.7cm}
+\begin{itemize}
+\item Docker Compose dựng toàn bộ ba dịch vụ bằng \code{docker compose up --build}.
+\item Dashboard và datasource được nạp tự động từ cấu hình trong repository.
+\item API chuyển \code{normal} / \code{degraded} để trình diễn sự cố.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Phần đã triển khai}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\begin{block}{Nguồn dữ liệu xác định}
+Mỗi giây cập nhật theo nhịp \(w=t\bmod 10\). Không dùng random; cùng kịch bản tạo lại được cùng mẫu dữ liệu.
+\end{block}
+\begin{block}{Bất biến dữ liệu}
+\(\Delta RX=\Delta TX+\Delta Drop\). Counter chỉ tăng; session và lcore là Gauge.
+\end{block}
+\end{column}
+\begin{column}{0.45\textwidth}
+\begin{block}{Dashboard}
+\begin{enumerate}
+\item Packet throughput RX/TX
+\item Packet drop rate
+\item Active sessions
+\item Per-lcore utilization (0--3)
+\end{enumerate}
+\end{block}
+\end{column}
+\end{columns}
+\vspace{0.25cm}
+\centering\small Mã nguồn Go, kiểm thử, Compose, cấu hình Prometheus và Grafana đã có trong repository.
+\end{frame}
+
+\begin{frame}{Kết quả triển khai và kiểm chứng}
+\small
+\begin{table}
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Chỉ số mô phỏng mỗi giây} & \textbf{Normal} & \textbf{Degraded} \\
+\midrule
+Gói nhận & 1.200--1.335 & 520--592 \\
+Gói bị loại & 2--4 & 75--93 \\
+Tải lcore 0 & 32--36,5\% & 78--82,5\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+\vspace{0.2cm}
+\begin{itemize}
+\item \code{go test ./...}: đạt; kiểm tra bất biến Counter, mode switch, lcore và mode lỗi.
+\item \code{docker compose config --quiet}: đạt; cấu hình triển khai hợp lệ.
+\item Các dải số trên suy ra từ công thức simulator, \textbf{không phải đo UPF thật}.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Ứng dụng thực tế và trình diễn}
+\begin{block}{Giá trị hiện tại}
+Demo giám sát UPF, đào tạo cách đọc metric, thử dashboard và quy trình triển khai trước khi nối nguồn dữ liệu thật.
+\end{block}
+\begin{enumerate}
+\item Mở \code{localhost:3000/d/mock-upf-demo/mock-upf-overview}; quan sát bốn panel ở chế độ normal.
+\item Gọi \code{POST /mode?mode=degraded} trên cổng 8080; đợi khoảng 20 giây để thấy throughput giảm, drop và tải lcore tăng.
+\item Gọi \code{POST /mode?mode=normal} để khôi phục; đối chiếu \code{localhost:9090/targets}.
+\end{enumerate}
+\vspace{0.2cm}
+\small\textbf{Bước tiếp theo:} kết nối metric UPF thật, thêm cảnh báo và đánh giá end-to-end bằng dữ liệu đo.
+\end{frame}
+
+\end{document}
